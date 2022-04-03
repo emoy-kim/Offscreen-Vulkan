@@ -1,9 +1,9 @@
 #include "renderer.h"
 
 RendererVK::RendererVK() :
-   FrameWidth( 1280 ), FrameHeight( 720 ), Instance{}, ColorFormat( VK_FORMAT_R8G8B8A8_SRGB ), Framebuffer{},
-   Common( std::make_shared<CommonVK>() ), ColorAttachment{}, DepthAttachment{}, VertexBuffer{}, VertexBufferMemory{},
-   CommandBuffer{}, Fence{}
+   FrameWidth( 1280 ), FrameHeight( 720 ), FrameIndex( 0 ), Framerate( 30.0f ), Instance{},
+   ColorFormat( VK_FORMAT_R8G8B8A8_SRGB ), Framebuffer{}, Common( std::make_shared<CommonVK>() ), ColorAttachment{},
+   DepthAttachment{}, VertexBuffer{}, VertexBufferMemory{}, CommandBuffer{}, Fence{}
 {
 }
 
@@ -274,6 +274,20 @@ void RendererVK::createSyncObjects()
    if (fence_result != VK_SUCCESS) throw std::runtime_error("failed to create synchronization objects for a frame!");
 }
 
+void RendererVK::createRecorder()
+{
+   Recorder = std::make_shared<VideoWriter>();
+   const std::string output_file_path = std::string(CMAKE_SOURCE_DIR) + "/result.mp4";
+   const bool result = Recorder->open(
+      output_file_path,
+      static_cast<int>(FrameWidth),
+      static_cast<int>(FrameHeight),
+      Framerate,
+      AV_CODEC_ID_H264
+   );
+   if (!result) throw std::runtime_error("Could not write video");
+}
+
 void RendererVK::initializeVulkan()
 {
    createInstance();
@@ -291,6 +305,7 @@ void RendererVK::initializeVulkan()
    createVertexBuffer();
    createCommandBuffer();
    createSyncObjects();
+   createRecorder();
 }
 
 void RendererVK::recordCommandBuffer(VkCommandBuffer command_buffer)
@@ -378,7 +393,7 @@ void RendererVK::drawFrame()
       glm::translate( glm::mat4(1.0f), glm::vec3(-0.25f, 0.0f, 0.0f) ) *
       glm::rotate(
          glm::mat4(1.0f),
-         glm::radians( 210.0f ),
+         glm::radians( static_cast<float>(FrameIndex) * 5.0f ),
          glm::vec3(0.0f, 1.0f, 0.0f)
       ) * glm::translate( glm::mat4(1.0f), glm::vec3(-0.5f, -0.5f, 0.0f) );
    const glm::mat4 upper_world =
@@ -546,7 +561,8 @@ void RendererVK::writeFrame()
       inverted_data += subresource_layout.rowPitch;
    }
 
-   const std::string file_name = std::filesystem::path(CMAKE_SOURCE_DIR) / "frame.png";
+   const std::string file_name =
+      std::string(CMAKE_SOURCE_DIR) + "/frame[" + std::to_string( FrameIndex ) + "].png";
    FIBITMAP* image = FreeImage_ConvertFromRawBits(
       image_data,
       static_cast<int>(FrameWidth),
@@ -563,10 +579,103 @@ void RendererVK::writeFrame()
    vkDestroyImage( CommonVK::getDevice(), dst_image, nullptr );
 }
 
+void RendererVK::writeVideo()
+{
+   VkImage dst_image;
+   VkDeviceMemory dst_image_memory;
+   CommonVK::createImage(
+      FrameWidth, FrameHeight,
+      ColorFormat,
+      VK_IMAGE_TILING_LINEAR,
+      VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      dst_image,
+      dst_image_memory
+   );
+
+   VkCommandBuffer copy_command = CommonVK::createCommandBuffer( VK_COMMAND_BUFFER_LEVEL_PRIMARY );
+
+   CommonVK::insertImageMemoryBarrier(
+      copy_command,
+      dst_image,
+      0,
+      VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_IMAGE_LAYOUT_UNDEFINED,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 }
+   );
+
+   VkImageCopy image_copy_region{};
+   image_copy_region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+   image_copy_region.srcSubresource.layerCount = 1;
+   image_copy_region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+   image_copy_region.dstSubresource.layerCount = 1;
+   image_copy_region.extent.width = FrameWidth;
+   image_copy_region.extent.height = FrameHeight;
+   image_copy_region.extent.depth = 1;
+
+   vkCmdCopyImage(
+      copy_command,
+      ColorAttachment.Image,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      dst_image,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      1,
+      &image_copy_region
+   );
+
+   CommonVK::insertImageMemoryBarrier(
+      copy_command,
+      dst_image,
+      VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_ACCESS_MEMORY_READ_BIT,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_GENERAL,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 }
+   );
+
+   CommonVK::flushCommandBuffer( copy_command );
+
+   VkImageSubresource subresource{};
+   subresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+   VkSubresourceLayout subresource_layout;
+   vkGetImageSubresourceLayout(
+      CommonVK::getDevice(),
+      dst_image,
+      &subresource,
+      &subresource_layout
+   );
+
+   uint8_t* image_data;
+   vkMapMemory(
+      CommonVK::getDevice(),
+      dst_image_memory,
+      0,
+      VK_WHOLE_SIZE,
+      0,
+      (void**)&image_data
+   );
+   image_data += subresource_layout.offset;
+
+   Recorder->writeVideo( image_data );
+
+   vkUnmapMemory( CommonVK::getDevice(), dst_image_memory );
+   vkFreeMemory( CommonVK::getDevice(), dst_image_memory, nullptr );
+   vkDestroyImage( CommonVK::getDevice(), dst_image, nullptr );
+}
+
 void RendererVK::play()
 {
    initializeVulkan();
-   drawFrame();
-   writeFrame();
+   while (FrameIndex < 150) {
+      drawFrame();
+      writeVideo();
+      FrameIndex++;
+   }
+   Recorder->close();
    vkDeviceWaitIdle( CommonVK::getDevice() );
 }

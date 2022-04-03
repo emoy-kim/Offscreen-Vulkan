@@ -2,6 +2,7 @@
 
 #include "object.h"
 #include "shader.h"
+#include "fileio/video_writer.h"
 
 class RendererVK final
 {
@@ -21,6 +22,8 @@ private:
 
    uint32_t FrameWidth;
    uint32_t FrameHeight;
+   uint32_t FrameIndex;
+   float Framerate;
    VkInstance Instance;
    VkFormat ColorFormat;
    VkFramebuffer Framebuffer;
@@ -34,6 +37,7 @@ private:
    std::shared_ptr<ObjectVK> UpperSquareObject;
    std::shared_ptr<ObjectVK> LowerSquareObject;
    std::shared_ptr<ShaderVK> Shader;
+   std::shared_ptr<VideoWriter> Recorder;
 
 #ifdef NDEBUG
    inline static constexpr bool EnableValidationLayers = false;
@@ -96,6 +100,8 @@ private:
    void recordCommandBuffer(VkCommandBuffer command_buffer);
    void drawFrame();
    void writeFrame();
+   void writeVideo();
    [[nodiscard]] static std::vector<const char*> getRequiredExtensions();
    void createInstance();
+   void createRecorder();
 };
