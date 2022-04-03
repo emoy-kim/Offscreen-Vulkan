@@ -15,6 +15,9 @@ set(
         source/object.cpp
         source/shader.cpp
         source/renderer.cpp
+        source/fileio/file_codec.cpp
+        source/fileio/file_encoder.cpp
+        source/fileio/video_writer.cpp
 )
 
 include_directories("include")
@@ -27,7 +30,6 @@ include(cmake/target-link-libraries-linux.cmake)
 target_include_directories(offscreen_vulkan PUBLIC ${CMAKE_BINARY_DIR})
 
 configure_file(include/project_constants.h.in ${PROJECT_BINARY_DIR}/project_constants.h @ONLY)
-
 
 #==============================================================================
 # COMPILE SHADERS
