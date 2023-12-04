@@ -1,0 +1,18 @@
+target_link_libraries(
+    offscreen_vulkan
+        vulkan
+        avdevice
+        avfilter
+        avformat
+        avcodec
+        swresample
+        swscale
+        avutil
+        x264
+        z
+        dl
+        bz2
+        lzma
+        pthread
+        freeimage
+)
